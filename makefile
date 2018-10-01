@@ -2,6 +2,9 @@ BR := $(shell git branch | grep \* | cut -d ' ' -f2-)
 bump-patch:
 	bumpversion patch
 
+password:
+	openssl passwd -apr1
+
 bump-minor:
 	bumpversion minor
 
@@ -24,16 +27,33 @@ push:
 	git push origin master
 	git push origin dev
 
+hz_servers:
+	@echo "quering servers list"
+	@source .env && curl -s \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $${HETZNER_API_KEY}" https://api.hetzner.cloud/v1/servers \
+		| jq '.servers | .[] | {id: .id, name: .name, status: .status, image: .image.name}'
 
-h_servers:
-	source .env && curl -H "Content-Type: application/json" -H "Authorization: Bearer $${HETZNER_API_KEY}" https://api.hetzner.cloud/v1/servers | jq
-
-h_test_rebuild:
-	source .env && curl -H "Content-Type: application/json" -H "Authorization: Bearer $${HETZNER_API_KEY}" \
+hz_test_rebuild:
+	@source .env && curl -s -H "Content-Type: application/json" -H "Authorization: Bearer $${HETZNER_API_KEY}" \
 		-d '{"image": "ubuntu-16.04"}' \
-		-X POST https://api.hetzner.cloud/v1/servers/1114551/actions/rebuild | jq
+		-X POST "https://api.hetzner.cloud/v1/servers/$${HETZNER_TEST_SRV}/actions/rebuild" | jq
 
-h_stage_rebuild:
-	source .env && curl -H "Content-Type: application/json" -H "Authorization: Bearer $${HETZNER_API_KEY}" \
+hz_stage_rebuild:
+	source .env && curl -s -H "Content-Type: application/json" -H "Authorization: Bearer $${HETZNER_API_KEY}" \
 		-d '{"image": "ubuntu-16.04"}' \
-		-X POST https://api.hetzner.cloud/v1/servers/594645/actions/rebuild | jq
+		-X POST "https://api.hetzner.cloud/v1/servers/$${HETZNET_STAGE_SRV}/actions/rebuild" | jq
+
+test_rebuild:
+	make hz_test_rebuild
+	ansible-playbook os_init.yml --limit=test -e wait_server=1
+	ansible-playbook platform.yml --limit=test --tags=full -e branch=dev
+
+
+test_full:
+	ansible-playbook platform.yml --limit=test --tags=full -e branch=dev
+
+
+test_platform:
+	ansible-playbook platform.yml --limit=test --tags=platform -e branch=dev
+

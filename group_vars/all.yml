@@ -1,27 +1,24 @@
-playbook_version: 3.4.4
-# ########## google site verifications ##########
-# for example google65679391aa745584.html
-_google_webmaster: ""
-# ########## local config ##########
-_local_config: "{{(ansible_local.config|default({})).general|default({})}}"
+# playbook version fill automatically
+playbook_version: 3.6.3
+branch: master
+# ########## google site verifications file name ##########
+_google_webmaster: "" # like google65679391aa745584.html
 # ########## Features ##########
 setup_server: yes
 setup_nginx: yes
 _setup_ssl: yes
-_ssl_wildcard: no
 setup_jupyter: yes
 setup_theia: yes
 metrics_server: no
-# ########## Creds ##########
-person_name: Aldous Huxley
-contact_email: alex@ebalrefuckanal.de
-#sysuser
+# will runned by director at first start
+_initial_startup: [mmgeo, sxgeo, uaparser]
+# sysuser
 rsys_creds: [ "rsys", "" ]
 ruser_creds: [ "ruser", "" ]
-#main user. (temp)
+# main user. (temp)
 main_user: default
 main_user_password: default
-#system users
+# system users
 support_user: 'x011'
 remote_user: 'x011'
 #key for update manager to access server
@@ -34,50 +31,45 @@ repos:
   dashboard: "{{git_account}}/dashboard.git"
   theia: "{{git_account}}/theia-ide-image.git"
   splash: "{{git_account}}/splash.git"
+# ########## emitting configuration ##########
+_local_config: "{{(ansible_local.config|default({})).general|default({})}}"
+_random_pass: "{{ lookup('lines', 'sh -c \"openssl rand -base64 18 | openssl passwd -apr1 -stdin\"') }}"
+_fullname: "{{ realname|default(_local_config.fullname|default('Aldous Huxley'))}}"
+_email: "{{ email|default(_local_config.email|default('hello@example.com'))}}"
+_admin_password: "{{admin_password|default(_local_config.admin_password|default(_random_pass))}}"
+_enable_support: "{{enable_support|default(_local_config.enable_support|default('1')|bool)}}"
+_dns_challenge: "{{_local_config.dns_challenge|default('http')}}"
+_ssl_wildcard: "{{ssl_wildcard|default(_dns_challenge == 'dns')|bool}}"
+_tag: "{{ branch == 'master' and 'latest' or branch }}"
 # ########## Domains ##########
-domain: "{{tracker_domain|default(ansible_host)}}"
-domains:
-  app: 'app.{{domain}}'
-  web: 'web.{{domain}}'
-  grafana: 'grafana.{{domain}}'
-  jupyter: 'jupyter.{{domain}}'
-  theia: 'theia.{{domain}}'
-  netdata: 'netdata.{{domain}}'
-  httpdebug: 'httpdebug.{{domain}}'
-subdomains: "{{ domains.keys()|list }}"
+_domain: "{{_local_config.domain|default(ansible_host)}}"
+_subdomains: [app, web, grafana, jupyter, theia, netdata, demo]
+_domains: "{{ _subdomains|map('regex_replace', '^(.*)$', '\\1.' + _domain)|list }}"
 # ########## SSL ##########
-    # email: "{{contact_email}}"
-# domains for regular reques
 domains_ssl:
-  - email: '{{contact_email}}'
-    domains: "{{[domain] + domains.values()|list|unique}}"
-# _ssl_cert_dir: "/etc/letsencrypt/live"
-_ssl_cert_fullchain: fullchain.cer
-_ssl_cert_trust: cert.cer
-_ssl_cert_key: priv.key
+  - email: '{{email}}'
+    domains: "{{[_domain] + _domains.values()|list|unique}}"
 # ########## Images ##########
 _images:
+  band: "rockstat/band-base-py:{{_tag}}"
+  director: "rockstat/director:{{_tag}}"
+  front: "rockstat/front:{{_tag}}"
+  chwriter: "rockstat/chwriter:{{_tag}}"
+  ebaloger: rockstat/ebaloger
+  theia: rockstat/theia-ide
+  heavyload: rockstat/heavyload
+  anaconda: rockstat/anaconda
+  httpdebug: rockstat/httpdebug
+  logspout: gliderlabs/logspout
   chproxy: rockstat/chproxy
   redis: redis:4-alpine
-  logspout: gliderlabs/logspout
-  ebaloger: rockstat/ebaloger
-  anaconda: rockstat/anaconda
   grafana: rockstat/grafana
-  band: rockstat/band-base-py
-  director: rockstat/director
-  theia: rockstat/theia-ide
-  front: rockstat/front
-  chwriter: rockstat/chwriter
-  heavyload: rockstat/heavyload
-  httpdebug: rockstat/httpdebug
-images: "{{_images|combine(images_extra|default({}))}}"
+  fakeshop: madiedinro/fake-shop
+images: "{{_images|combine(_images_extra|default({}))}}"
 # ########## Logs ##########
-#loggly
 _loggly_hostname: logs-01.loggly...
 _loggly_api_key: 10bbf2d8...
-#papertrail
 _papertrail_hostname: logs7.pape....
-#destination
 _logspout_target: none
 _logspout_enabled: yes
 # ########## dirs ##########
@@ -110,7 +102,14 @@ dirs:
   clickhouse_tmp: "/srv/clickhouse_tmp"
   clickhouse_log: "/var/log/clickhouse-server"
   redis: "/srv/redis"
-create_dirs: ["{{images_dir}}", "{{build_dir}}", "{{data_dir}}", "{{etc_dir}}", "{{dirs.well_known}}","{{dirs.certs}}"]
+create_dirs:
+  - ["{{images_dir}}", "{{build_dir}}", "{{data_dir}}", "{{etc_dir}}", ]
+  - ["{{dirs.well_known}}","{{dirs.certs}}", "{{dirs.user_images}}"]
+  - ["{{dirs.workspace}}"]
+# ssl files
+_ssl_cert_fullchain: fullchain.cer
+_ssl_cert_trust: cert.cer
+_ssl_cert_key: priv.key
 # ########## ports ##########
 ports:
   # services
@@ -124,10 +123,11 @@ ports:
   # tools
   logspout: [8088, 80]
   grafana: [3000, 3000]
-  jupyter: [8888, 8888]
+  jupyter: [8888, 8080]
   theia: [8887, 8000]
-  theia_user: [8886, 8080]
+  theia_dev: [8886, 8080]
   netdata: [19999]
+  fakeshop: [8087, 8080]
   # servers
   http: [80]
   https: [443]
@@ -159,7 +159,8 @@ docker_net_net: "{{docker_net|ipaddr('network')}}"
 docker_defnet_pattern: 172.17.*
 docker_defnet_net: "{{docker_defnet_pattern|ip_p2n}}"
 # other params
-docker_band_lbls: {inband: system}
+docker_band_lbls: { inband: system }
+_label_band_managed: { role: managed }
 _restart_policy: unless-stopped
 # ########## Clients VPN ##########
 covpn_keys_dir: '{{home_dir}}/ovpn_keys'
@@ -184,9 +185,8 @@ firewall_rules:
   - { to_port: '{{ports.openvpn.0}}'}
 # ########## Jupyter/anaconda packages ##########
 # install libs to python containers: anaconda and theia
-_dev_env_py_libs: ["msgpack", "ujson", "prodict", "arrow", "simplech", "asimplech"]
-dev_env_py_libs: "{{_dev_env_py_libs|combine(dev_env_py_libs_extra|default({})) }}"
-# todo: ability to specify additional packages for theia and others
+_dev_py_libs: ["msgpack", "ujson", "prodict", "arrow", "simplech", "asimplech"]
+dev_py_libs: "{{_dev_env_py_libs|combine(_dev_py_libs_extra|default({})) }}"
 # ########## ClickHouse ##########  
 _clickhouse_profiles_custom:
   sys_prof: { max_memory_usage: 3000000000, use_uncompressed_cache: 0, load_balancing: random } 
@@ -222,26 +222,40 @@ _chproxy_users_default:
 # ########## CH Common ##########
 _chp_dsn: "http://{{main_user}}:{{main_user_password}}@host:{{ports.chproxy.0}}/{{ch_db}}"
 _chs_dsn: "http://{{main_user}}@host:{{ports.clickhouse.0}}/{{ch_db}}"
-# ########## Common Envs ##########
+# ########## Services env ##########
 _containers_env:
-  # **ATTENTION! You have to configure variables at Director's config too!**
-  DOMAIN: "{{domain}}"
+  director:
+    #ENCODED_ENV will be set in playbook
+    PORT: "{{ports.director.1}}"
+    IMAGES_PATH: "/images"
+    INITIAL_STARTUP: "{{(_initial_startup + _initial_startup_extra|default([]))|to_json}}"
+    BIND_HOST_ADDR: "{{ if_inner }}"
+    BAND_PY_IMAGE: "{{_images.band}}"
+  theia:
+    PORT_THEIA: "{{ports.theia.1}}"
+    PORT_DEV: "{{ports.theia_dev.1}}"
+  heavyload:
+    WEBHOOK: "http://front:{{ports.front.1}}/upload/notify"
+# for user overrides
+_containers_env_extra: {}
+# ########## Common Envs ##########
+_common_env:
+  JSON_LOGS: 1
+  LOG_LEVEL: "info"
+  DOMAIN: "{{_domain}}"
   HOST_ADDR: "{{if_inner}}"
   STATSD_HOST: "{{if_inner}}"
-  LOG_LEVEL: "info"
-  JSON_LOGS: 1
   NETWORK: "{{docker_net_name}}"
   REDIS_DSN: "redis://redis:6379"
+  FULLNAME: "{{_fullname}}"
+  EMAIL: "{{_email}}"
   CH_DSN: "{{_chp_dsn}}"
   CHP_DSN: "{{_chp_dsn}}"
   CHS_DSN: "{{_chs_dsn}}"
-containers_env: "{{_containers_env|combine(containers_env_extra|default({}))}}"
-_director_env:
-  PORT: "{{ports.director.1}}"
-  IMAGES_PATH: "/images"
-_theia_env:
-  PORT_THEIA: "{{ports.theia.1}}"
-  PORT_USER: "{{ports.theia_user.1}}"
+# for user overrides `_common_env_extra`
+common_env: "{{_common_env|combine(_common_env_extra|default({}))}}"
+container_env: "{{ {}|combine( common_env, _containers_env[service]|default({}), _containers_env_extra[service]|default({}) ) }}"
+
 # ########## NGINX COMMONS ##########
 # configuration extra params
 _nginx_proxy_params_extra: []
@@ -251,9 +265,9 @@ _nginx_front_extra: []
 _nginx_listen: 
   - "listen 443 ssl http2"
 _nginx_ssl:
-  - ssl_certificate_key     {{dirs.certs}}/{{domain}}/{{_ssl_cert_key}}
-  - ssl_certificate         {{dirs.certs}}/{{domain}}/{{_ssl_cert_fullchain}}
-  - ssl_trusted_certificate {{dirs.certs}}/{{domain}}/{{_ssl_cert_trust}}
+  - ssl_certificate_key     {{dirs.certs}}/{{_domain}}/{{_ssl_cert_key}}
+  - ssl_certificate         {{dirs.certs}}/{{_domain}}/{{_ssl_cert_fullchain}}
+  - ssl_trusted_certificate {{dirs.certs}}/{{_domain}}/{{_ssl_cert_trust}}
 _nginx_nocache:
   - add_header 'Cache-Control' 'no-store; must-revalidate'
   - expires off
@@ -265,7 +279,7 @@ _nginx_le_challenge:
   - "location /.well-known/ { auth_basic off; proxy_pass http://uletsencrypt; }"
 # specific configurations
 _nginx_forward_vh:
-  - server_name {sd}.{{domain}}
+  - server_name {sd}.{{_domain}}
   - "{{_nginx_le_challenge}}"
   - location / { proxy_pass http://u{sd}; }
   - "{{_nginx_auth}}"
@@ -282,9 +296,9 @@ _nginx_defvh_https:
   - "{{_nginx_ssl}}"
   - "root {{dirs.splash}}"
   - "{{_nginx_le_challenge}}"
-  - "location / { try_files $uri $uri/index.html; }"
+  - "location / { try_files $uri /index.html; }"
 _nginx_front:
-  - server_name {{domain}}
+  - server_name {{_domain}}
   - "{{_nginx_base_vh}}"
   - "root {{dirs.splash}}"
   - "{{_nginx_le_challenge}}"
@@ -298,7 +312,7 @@ _nginx_front:
       limit_except POST { deny all; }
       proxy_pass http://uheavyload; }
 _nginx_dashboard:
-  - server_name app.{{domain}}
+  - server_name app.{{_domain}}
   - "{{_nginx_base_vh}}"
   - "{{_nginx_auth}}"
   - "root {{dirs.dashboard}}/dist"
@@ -307,12 +321,8 @@ _nginx_dashboard:
   - location /ws { proxy_pass http://uebaloger; }
   - location / { try_files $uri /index.html; }
 _nginx_grafana:
-  - server_name grafana.{{domain}}
-  - "{{_nginx_le_challenge}}"
-  - location / { proxy_pass http://ugrafana; }
-  - location /public/ { auth_basic off; proxy_pass http://ugrafana; }
-  - "{{_nginx_auth}}"
-  - "{{_nginx_base_vh}}"
+  - "{{_nginx_forward_vh}}"
+  - location /public/ { auth_basic off; proxy_pass http://u{sd}; }
   - proxy_set_header X-WEBAUTH-USER $remote_user
   - proxy_hide_header Authorization
 _nginx_netdata:
@@ -323,8 +333,9 @@ _nginx_sites:
   def_http: "{{_nginx_defvh_http|flatten }}"
   front: "{{_nginx_front|flatten }}"
   dashboard: "{{_nginx_dashboard|flatten }}"
-  grafana: "{{_nginx_grafana|flatten}}"
+  grafana: "{{_nginx_grafana|flatten|map('replace','{sd}','grafana')|list}}"
   theia: "{{_nginx_forward_vh|flatten|map('replace','{sd}','theia')|list}}"
+  demo: "{{_nginx_forward_vh|flatten|map('replace','{sd}','demo')|list}}"
   jupyter: "{{_nginx_forward_vh|flatten|map('replace','{sd}','jupyter')|list}}"
   netdata: "{{_nginx_netdata|flatten}}"
   httpdebug: "{{_nginx_forward_vh|flatten|map('replace','{sd}','httpdebug')|list}}"
@@ -334,15 +345,16 @@ _nginx_upstreams:
   - 'upstream udirector { server {{if_inner}}:{{ports.director.0}};  }'
   - 'upstream uheavyload { server {{if_inner}}:{{ports.heavyload.0}};  }'
   - 'upstream ugrafana { server {{if_inner}}:{{ports.grafana.0}}; }'
-  - 'upstream uebaloger { server {{if_inner}}:{{ports.ebaloger_http.0}};}'
+  - 'upstream uebaloger { server {{if_inner}}:{{ports.ebaloger_http.0}};}' # used at dashboard
   - 'upstream ujupyter { server {{if_inner}}:{{ports.jupyter.0}}; }'
   - 'upstream unetdata { server {{if_inner}}:{{ports.netdata.0}}; }'
   - 'upstream utheia { server {{if_inner}}:{{ports.theia.0}}; }'
   - 'upstream uhttpdebug { server {{if_inner}}:{{ports.httpdebug.0}}; }'
   - 'upstream uletsencrypt { server {{if_inner}}:{{ports.letsencrypt.0}}; }'
+  - 'upstream udemo { server {{if_inner}}:{{ports.fakeshop.0}}; }'
 
 # ########## Other things ##########
 hostname: "{{inventory_hostname_short|default(inventory_hostname)}}"
 # ########## Mailer config ##########
-mailer_subj_key: "Ваши ключи OpenVPN ({{ domain }}) v{{ playbook_version }}"
-mailer_subj_snip: "Сниппет для сайта ({{ domain }}) v{{ playbook_version }}"
+mailer_subj_key: "Ваши ключи OpenVPN ({{ _domain }}) v{{ playbook_version }}"
+mailer_subj_snip: "Сниппет для сайта ({{ _domain }}) v{{ playbook_version }}"

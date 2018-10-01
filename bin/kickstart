@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION=3.4.4
+VERSION=3.6.3
 PLATFORM_HOME=/srv/platform
 BOOTSTRAP_BRANCH=${BRANCH:-master}
 BOOTSTRAP_REPO=https://github.com/rockstat/bootstrap.git
@@ -15,11 +15,15 @@ FACT_CONF=/etc/ansible/facts.d/config.fact
 
 # state vars
 DOMAIN=""
-USERNAME=""
+FULLNAME=""
 EMAIL=""
 ADMIN_PASSWORD=""
 DEF_HOSTALIAS="rstat"
 HOSTALIAS="$DEF_HOSTALIAS"
+ENABLE_SUPPORT_DEF="1"
+ENABLE_SUPPORT="$ENABLE_SUPPORT_DEF"
+SSL_CHALLENGE_DEF="http"
+SSL_CHALLENGE="$SSL_CHALLENGE_DEF"
 INSTALLED=""
 
 # setup state vars
@@ -156,7 +160,7 @@ setup_system_packages() {
 setup_python_packages() {
   print_status "Installing required python packages"
   pip3 -q install wheel \
-  && pip3 -q install ansible prompt_toolkit cryptography==1.9 validators passlib netaddr \
+  && pip3 -q install -r $BOOTSTRAP_DIR/requirements.txt -U \
   && print_ok
 }
 
@@ -232,8 +236,8 @@ request_email(){
   whiptailInput "EMAIL" "Email" "Email required for issuing letsencrypt SSL and GIT." 8 78
 }
 
-request_username(){
-  whiptailInput "USERNAME" "User name" "Provide your first and last name. Will be used in git configuration." 8 78
+request_fullname(){
+  whiptailInput "FULLNAME" "Full name" "Provide your name. Will be used in git configuration." 8 78
 }
 
 request_password(){
@@ -244,21 +248,48 @@ update_reboot_dialog(){
   show_dialog "System upgrade" "After upgrade complete server will be rebooted and you need to connect agant to continue."
 }
 
+greate_success_dialog(){
+  show_dialog "Execution completed" "Greate success!"
+}
+
+run_full_setup_to_apply_dialog(){
+  show_dialog "Applying changes" "Run full install/upgrade to apply changes"
+}
 
 ################################################################################
 ## Actions
 ################################################################################
 
-run_platform_playbook() {
+ANS_PY="-e ansible_python_interpreter=/usr/bin/python3"
+ANS_FORCE_SSL="-e ansible_python_interpreter=/usr/bin/python3"
+ANS_BRANCH="-e branch=${BOOTSTRAP_BRANCH}"
+
+
+run_platform_playbook() { # (tags, custom)
   setup_playbook
   print_status "Starting ansible"
-  ansible-playbook platform.yml --connection=local --tags=${1} -e 'ansible_python_interpreter=/usr/bin/python3'
+  ansible-playbook platform.yml --connection=local --tags=${1} $ANS_PY $ANS_BRANCH ${2}
   if [ $? -eq 0 ]; then print_status "Done"; else print_error "FAILED"; exit 1; fi
+  greate_success_dialog
 }
 
 run_upgrade_playbook() {
   print_status "Starting ansible"
-  ansible-playbook os_upgrade.yml --connection=local && exit 0
+  ansible-playbook os_upgrade.yml --connection=local $ANS_PY && exit 0
+  if [ $? -eq 0 ]; then print_status "Done"; else print_error "FAILED"; exit 1; fi
+  # server shold be go to reboot
+}
+
+switch_support_value(){
+  ENABLE_SUPPORT=$([ "$ENABLE_SUPPORT" == "1" ] && echo "0" || echo "1")
+  save_config
+  run_full_setup_to_apply_dialog
+}
+
+switch_ssl_challenge(){
+  SSL_CHALLENGE=$([ "$SSL_CHALLENGE" == "dns" ] && echo "http" || echo "dns")
+  save_config
+  run_full_setup_to_apply_dialog
 }
 
 ################################################################################
@@ -271,9 +302,13 @@ load_config(){
     DOMAIN=$(awk -F "=" '/domain/ {print $2}' $FACT_CONF)
     EMAIL=$(awk -F "=" '/email/ {print $2}' $FACT_CONF)
     ADMIN_PASSWORD=$(awk -F "=" '/admin_password/ {print $2}' $FACT_CONF)
-    USERNAME=$(awk -F "=" '/username/ {print $2}' $FACT_CONF)
+    FULLNAME=$(awk -F "=" '/fullname/ {print $2}' $FACT_CONF)
     HOSTALIAS=$(awk -F "=" '/hostalias/ {print $2}' $FACT_CONF)
+    ENABLE_SUPPORT=$(awk -F "=" '/enable_support/ {print $2}' $FACT_CONF)
+    SSL_CHALLENGE=$(awk -F "=" '/ssl_challenge/ {print $2}' $FACT_CONF)
     if [[ -z "$HOSTALIAS" ]]; then HOSTALIAS=$DEF_HOSTALIAS; fi
+    if [[ -z "$ENABLE_SUPPORT" ]]; then ENABLE_SUPPORT=$ENABLE_SUPPORT_DEF; fi
+    if [[ -z "$SSL_CHALLENGE" ]]; then SSL_CHALLENGE=$SSL_CHALLENGE_DEF; fi
   fi
 }
 
@@ -296,7 +331,9 @@ domain=${DOMAIN}
 email=${EMAIL}
 admin_password=${ADMIN_PASSWORD}
 hostalias=${HOSTALIAS}
-username=${USERNAME}
+fullname=${FULLNAME}
+enable_support=${ENABLE_SUPPORT}
+ssl_challenge=${SSL_CHALLENGE}
 installed=${INSTALLED}""" > $FACT_CONF
 }
 
@@ -328,7 +365,7 @@ initialize(){
   done
   while [ -z ${ADMIN_PASSWORD// } ]; do request_password
   done
-  while [ -z ${USERNAME// } ]; do request_username
+  while [ -z ${FULLNAME// } ]; do request_fullname
   done
   while [ -z ${HOSTALIAS// } ]; do request_hostalias
   done
@@ -348,7 +385,7 @@ done
 MENU_TEXT=$(cat <<'HEREDOC'
 Choose your option:
 --------------------------------------------------------
-- New installation:       sequentially 1, 2, 3
+- New installation:       sequentially 1, 3
 - Upgrade system and 
   platform:               option 3
 - Upgrade platform:       option 4
@@ -359,18 +396,26 @@ HEREDOC
 
 menu() {
   # --menu <text> <height> <width> <listheight>
+  SUPPORT_STATE=$([ "$ENABLE_SUPPORT" == "1" ] && echo "Disable" || echo "Enable")
+  SSL_CHALLENGE_STATE=$([ "$SSL_CHALLENGE" == "dns" ] && echo  || echo )
+  case "$SSL_CHALLENGE" in
+    "dns") SSL_CHALLENGE_STATE="DNS (wildcard)" ;;
+    "http") SSL_CHALLENGE_STATE="HTTP" ;;
+  esac
   OPTION=$(whiptail --title "Rockstat Shell Script Menu" --menu "${MENU_TEXT}" 30 60 14 \
   "1"  "    Upgrade OS" \
-  "2"  "    Issue SSL certificate" \
-  "3"  "    Install/upgrade system and platform" \
-  "4"  "    Upgrade only platform components" \
-  "30" "    Setup OpenVPN server" \
-  "11" "    Change Admin Password" \
-  "12" "    Change Domain '${DOMAIN}'" \
-  "13" "    Change Short hostname '${HOSTALIAS}'" \
+  "3"  "    Full Install/Upgrade" \
+  "4"  "    Platform Upgrade" \
+  "11" "    Change admin Password" \
+  "12" "    Change domain '${DOMAIN}'" \
+  "13" "    Change host alias '${HOSTALIAS}'" \
   "14" "    Change Email '${EMAIL}'" \
-  "15" "    Change Name '${USERNAME}'" \
-  "20" "    Apply new admin password" \
+  "15" "    Change full name '${FULLNAME}'" \
+  "20" "    Apply admin password to webserver" \
+  "30" "    Setup OpenVPN server" \
+  "31" "    Request SSL certificate with force option" \
+  "32" "    $SUPPORT_STATE remote upgrade and support access" \
+  "33" "    SSL challenge: ${SSL_CHALLENGE_STATE}" \
   "0"  "    Exit"  3>&1 1>&2 2>&3)
   EXITCODE=$?
   [[ "$EXITCODE" = 1 ]] && break;
@@ -379,16 +424,18 @@ menu() {
 
   case "$OPTION" in
     "1") update_reboot_dialog; run_upgrade_playbook ;;
-    "2") run_platform_playbook docker,ssl ;;
-    "3") run_platform_playbook full_setup ;;
+    "3") run_platform_playbook full ;;
     "4") run_platform_playbook pservice,ppart ;;
     "11") request_password ;;
     "12") request_domain ;;
     "13") request_hostalias ;;
     "14") request_email ;;
-    "15") request_username ;;
+    "15") request_fullname ;;
     "20") run_platform_playbook nginx ;;
     "30") run_platform_playbook ovpn-server ;;
+    "31") run_platform_playbook ssl $ANS_FORCE_SSL ;;
+    "32") switch_support_value ;;
+    "33") switch_ssl_challenge ;;
     "0") exit 1 ;;
     *) echo "Unknown action '${OPTION}'" ;;	
   esac

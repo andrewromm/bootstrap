@@ -40,21 +40,17 @@ yourdomain (or @)       A  1.2.3.4
 
 Required steps depends of 
 
-### Connect to server
+### Local setup on server
 
-#### On MacOS / Linux
+#### Connect to server
 
-Open Terminal app and type:
+Open Terminal application (On Windows know as `cmd`)  Type following connection command:
 
 ```bash
 ssh root@yourdomain
 ```
 
-#### Windows users
-
-To connect you should use any terminal emulator with ssh support. For example [PuTTY](https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html) 
-
-### Intial Setup
+#### Intials
 
 You need to setup curl only once
 
@@ -74,11 +70,30 @@ For **development** version
 curl -s https://raw.githubusercontent.com/rockstat/bootstrap/dev/bin/kickstart | sudo -E BRANCH=dev bash -
 ```
 
- ### Upgrade / reconfigure installation
+ #### Upgrade / reconfigure installation
 
 Rockstat is on active development stage. Lookat at page [What's new](https://rock.st/docs/what-s-new). Take a latest version.
 
 To run setup tool just type `rockstat`
+
+### Remote setup
+
+configure inventory
+
+```
+# ...
+test ansible_host=test.rstat.org realname=User email=hello@rstat.org
+```
+Generate password using `make password`. Execute playbook
+
+```
+ AHOST=test
+ APASS='$apr1$G2B2.GYy$QiBhuOZeRC03moZTPsB561'
+ansible-playbook platform.yml --limit=$AHOST --tags=ssl,full -e admin_password=$APASS
+```
+## Params
+
+To force SSL `-e ssl_force=1`
 
 ## Overriding configuration
 
@@ -87,16 +102,29 @@ You can override configuration by specifing alternative values.
 
 Configurations has a parts prepared for easy overriding/extending:
 
-##### images_extra
+#### images_extra
 
-```
-images_extra:
+```yaml
+_images_extra:
   chproxy: myusername/chproxy
   redis: redis:4-alpine
 ```
 
 will override only thease two images
 
+#### Custom env
+
+```yaml
+_containers_env_extra:
+  director:
+    PORT: 1899
+```
+
+#### Disable support access
+
+```yaml
+enable_support: no
+```
 
 ### IPv6
 
